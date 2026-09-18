@@ -11,6 +11,7 @@ Many Lenovo laptops don't receive BIOS updates through [LVFS](https://fwupd.org/
 - `7z` (p7zip)
 - `gcab`
 - `fwupdmgr` (fwupd)
+- `python3` (optional; used to match the device's version format, falls back to `plain`)
 
 ## Downloading the BIOS update
 
@@ -28,19 +29,22 @@ Many Lenovo laptops don't receive BIOS updates through [LVFS](https://fwupd.org/
 The script will:
 
 1. Extract the `.exe` archive with `7z`.
-2. Locate the `.fd` firmware file inside.
-3. Parse the BIOS version string from the filename.
+2. Locate the `.fd` (or `.rom`) firmware file inside.
+3. Parse the BIOS version string from the filename (`.rom` payloads: from the `.exe` name).
 4. Read your system's firmware GUID and current version from the ESRT.
-5. Generate fwupd-compatible metainfo XML.
+5. Generate fwupd-compatible metainfo XML (version format taken from `fwupdmgr get-devices`).
 6. Package everything into a `.cab` file.
+
+Before installing:
+
+- Add `OnlyTrusted=false` to `/etc/fwupd/fwupd.conf` (the `.cab` is unsigned) and restart fwupd: `sudo systemctl restart fwupd`.
+- **Secure Boot:** fwupd needs a distro-signed `fwupdx64.efi` loaded via shim. If the capsule is not applied on reboot, disable Secure Boot in UEFI setup, retry, and re-enable it afterwards.
 
 Then install the resulting `.cab`:
 
 ```bash
 sudo fwupdmgr install <version>.cab --allow-reinstall --no-reboot-check
 ```
-
-**You will need to add `OnlyTrusted=false` to `/etc/fwupd/fwupd.conf` since the resulting .cab file will not be signed.**
 
 Reboot to apply the update. The UEFI firmware will apply the capsule during boot.
 
@@ -54,8 +58,9 @@ Reboot to apply the update. The UEFI firmware will apply the capsule during boot
 | IdeaPad Pro 5 16IAH10 | Tested, working |
 | Yoga 9 2in-1 14ILL10  | Tested, working |
 | Legion 5 15AHP10      | Tested, working |
+| Legion Slim 5 16ARP9  | Tested, working |
 
-This script should work on other Lenovo laptops that use Insyde H2OFFT-based BIOS updates with a `.fd` firmware file inside the `.exe`. If you test it on another model, please open an issue or PR to update this table.
+This script should work on other Lenovo laptops that use Insyde H2OFFT-based BIOS updates with a `.fd` or `.rom` firmware file inside the `.exe`. If you test it on another model, please open an issue or PR to update this table.
 
 ## License
 

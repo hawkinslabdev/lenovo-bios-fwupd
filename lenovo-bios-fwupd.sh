@@ -51,10 +51,10 @@ echo "==> Extracting $EXE ..."
 7z x -o"$WORK/extracted" "$EXE" -bso0 -bsp0
 
 # --------------------------------------------------------------------------- #
-# Locate the .fd firmware file
+# Locate the .fd (or .rom) firmware file
 # --------------------------------------------------------------------------- #
-FD_FILE=$(find "$WORK/extracted" -maxdepth 1 -iname '*.fd' | head -1)
-[[ -n "$FD_FILE" ]] || die "No .fd firmware file found in the archive."
+FD_FILE=$(find "$WORK/extracted" -maxdepth 1 \( -iname '*.fd' -o -iname '*.rom' \) | head -1)
+[[ -n "$FD_FILE" ]] || die "No .fd or .rom firmware file found in the archive."
 FD_BASENAME=$(basename "$FD_FILE")
 echo "==> Found firmware: $FD_BASENAME"
 
@@ -62,7 +62,10 @@ echo "==> Found firmware: $FD_BASENAME"
 # Read the BIOS version string from the .fd filename
 #   Lenovo convention: WinQ7CN45WW.fd -> version string is Q7CN45WW
 # --------------------------------------------------------------------------- #
-BIOS_VERSION=$(echo "$FD_BASENAME" | sed -E 's/^Win//i; s/\.fd$//i')
+case "${FD_BASENAME,,}" in
+    *.rom) BIOS_VERSION=$(basename "${EXE^^}" .EXE) ;;  # .rom name is a platform code; use nucn17ww.exe -> NUCN17WW
+    *)     BIOS_VERSION=$(echo "$FD_BASENAME" | sed -E 's/^Win//i; s/\.fd$//i') ;;
+esac
 echo "==> BIOS version string: $BIOS_VERSION"
 
 # --------------------------------------------------------------------------- #
@@ -101,6 +104,17 @@ NUMERIC_VERSION=$(echo "$FW_CURRENT_VERSION" | tr -cd '0-9')
 NEW_VERSION=$((NUMERIC_VERSION + 1))
 echo "==> Metadata version for .cab: $NEW_VERSION"
 
+# Match the device's version format (plain/number), else fwupd refuses the .cab
+VERSION_FORMAT=$(fwupdmgr get-devices --json 2>/dev/null | python3 -c '
+import json, sys
+guid = sys.argv[1].lower()
+for dev in json.load(sys.stdin).get("Devices", []):
+    if guid in [g.lower() for g in dev.get("Guid", [])]:
+        print(dev.get("VersionFormat", "plain")); break
+' "$FW_GUID" 2>/dev/null || true)
+VERSION_FORMAT=${VERSION_FORMAT:-plain}
+echo "==> Version format: $VERSION_FORMAT"
+
 # --------------------------------------------------------------------------- #
 # Get system product name for the metainfo
 # --------------------------------------------------------------------------- #
@@ -127,7 +141,7 @@ cat > "$WORK/firmware.metainfo.xml" <<METAINFO
     </release>
   </releases>
   <custom>
-    <value key="LVFS::VersionFormat">plain</value>
+    <value key="LVFS::VersionFormat">$VERSION_FORMAT</value>
   </custom>
 </component>
 METAINFO
