@@ -10,7 +10,7 @@
 # Usage:
 #   ./lenovo-bios-fwupd.sh <bios_update.exe>
 #
-# Requirements: 7z, gcab, fwupdmgr
+# Requirements: 7z, gcab, fwupdmgr, fwupdtool, openssl
 #
 # IMPORTANT: Ensure AC power is connected and battery is above 30% before
 # installing. Do NOT interrupt the reboot after installation.
@@ -37,7 +37,7 @@ fi
 # --------------------------------------------------------------------------- #
 # Dependency checks
 # --------------------------------------------------------------------------- #
-for cmd in 7z gcab fwupdmgr; do
+for cmd in 7z gcab fwupdmgr fwupdtool; do
     command -v "$cmd" &>/dev/null || die "'$cmd' is required but not found. Please install it."
 done
 
@@ -158,7 +158,42 @@ OUTPUT_DIR=$(dirname "$(realpath "$EXE")")
 CAB_NAME="${BIOS_VERSION}.cab"
 OUTPUT_CAB="${OUTPUT_DIR}/${CAB_NAME}"
 
+# --------------------------------------------------------------------------- #
+# Sign the .cab (firmware.jcat) so fwupd's OnlyTrusted can stay enabled (see README)
+# --------------------------------------------------------------------------- #
+SIGN_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/lenovo-bios-fwupd"
+SIGN_CERT="${SIGN_CERT:-$SIGN_DIR/cert.pem}"
+SIGN_KEY="${SIGN_KEY:-$SIGN_DIR/key.pem}"
+TRUSTED_CERT=/etc/pki/fwupd/LOCAL-CA.pem
+
+command -v openssl &>/dev/null || die "openssl is required to sign the .cab."
+# fwupd rejects trust certs without a keyUsage extension (older versions of
+# this script generated such certs), so keep the old pair aside and regenerate
+if [[ -e "$SIGN_CERT" ]] && ! openssl x509 -in "$SIGN_CERT" -noout -ext keyUsage 2>/dev/null \
+        | grep -q 'Digital Signature'; then
+    echo "==> $SIGN_CERT has no keyUsage; moving it to .old and regenerating"
+    mv "$SIGN_CERT" "$SIGN_CERT.old"
+    [[ -e "$SIGN_KEY" ]] && mv "$SIGN_KEY" "$SIGN_KEY.old"
+fi
+if [[ ! -e "$SIGN_CERT" && ! -e "$SIGN_KEY" ]]; then
+    echo "==> Generating local signing key in $(dirname "$SIGN_KEY")"
+    mkdir -p "$(dirname "$SIGN_CERT")" "$(dirname "$SIGN_KEY")"
+    (umask 077 && openssl req -x509 -newkey rsa:4096 -nodes -days 3650 \
+        -keyout "$SIGN_KEY" -out "$SIGN_CERT" \
+        -subj "/CN=$USER local firmware signing" \
+        -addext "keyUsage=critical,digitalSignature,keyCertSign" 2>/dev/null)
+fi
+if ! sudo cmp -s "$SIGN_CERT" "$TRUSTED_CERT"; then
+    echo "==> Trusting $SIGN_CERT in fwupd ($TRUSTED_CERT)"
+    sudo install -Dm644 "$SIGN_CERT" "$TRUSTED_CERT"
+    sudo systemctl restart fwupd
+fi
+
 (cd "$WORK" && gcab --create "$OUTPUT_CAB" firmware.metainfo.xml firmware.bin)
+# fwupd >= 2.0 only reads firmware.jcat; detached .p7b files are ignored
+fwupdtool firmware-sign "$OUTPUT_CAB" "$SIGN_CERT" "$SIGN_KEY" \
+    || die "fwupdtool firmware-sign failed."
+echo "==> Signed with $SIGN_CERT"
 echo "==> Created: $OUTPUT_CAB"
 
 echo ""

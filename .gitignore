@@ -1,2 +1,4 @@
 *.cab
 *.exe
+out/
+*.pem
